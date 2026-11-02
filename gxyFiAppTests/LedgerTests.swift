@@ -52,6 +52,16 @@ struct LedgerTests {
     }
 }
 
+struct FormatTests {
+    @Test func amountsUseThousandsSeparators() {
+        #expect(FiFormat.cny(1_234_567.891) == "¥1,234,567.89")
+        #expect(FiFormat.money(0) == "0.00")
+        #expect(FiFormat.money(-1200.5) == "-1,200.50")
+        #expect(FiFormat.price(588.1200) == "588.12")
+        #expect(FiFormat.price(12_345) == "12,345")
+    }
+}
+
 struct MarketSymbolTests {
     @Test func recognizesShareCodes() throws {
         #expect(try Market.canonicalSymbol(market: "A", symbol: "600519") == "600519")

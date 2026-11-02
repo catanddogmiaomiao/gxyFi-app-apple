@@ -636,6 +636,108 @@ final class Ledger {
         } ?? []
     }
 
+    func balanceEntries() -> [BalanceRecord] {
+        (try? rows("SELECT * FROM balance_entries ORDER BY as_of_date, id"))?.map(balanceRow) ?? []
+    }
+
+    func budgetEntries() -> [(year: Int, categoryID: Int64, amount: Double, note: String)] {
+        ((try? rows("SELECT * FROM budget_lines ORDER BY year, category_id")) ?? []).map {
+            (Int($0.int("year")), $0.int("category_id"), $0.real("amount") ?? 0, $0.text("note"))
+        }
+    }
+
+    func recordCount() -> Int {
+        let tables = ["accounts", "balance_entries", "holdings", "properties", "expenses", "budget_lines"]
+        return tables.reduce(0) { total, table in
+            total + Int((try? rows("SELECT COUNT(*) AS n FROM \(table)").first?.int("n")) ?? 0)
+        }
+    }
+
+    func backup(to path: String) throws {
+        if FileManager.default.fileExists(atPath: path) { try FileManager.default.removeItem(atPath: path) }
+        try run("VACUUM INTO ?", [.text(path)])
+    }
+
+    /// Replaces every ledger table with the web account's rows, keeping the server ids.
+    func mirror(_ state: CloudState) throws {
+        try exec("BEGIN IMMEDIATE")
+        do {
+            try wipeTables()
+            try insert(state["categories"], into: "expense_categories", columns: ["id", "name", "sort_order"])
+            try insert(state["accounts"], into: "accounts", columns: ["id", "name", "institution", "kind", "currency", "note", "created_at"])
+            try insert(state["balances"], into: "balance_entries", columns: ["id", "account_id", "as_of_date", "balance", "note", "created_at"])
+            try insert(state["holdings"], into: "holdings", columns: [
+                "id", "name", "symbol", "market", "quantity", "currency", "avg_cost", "manual_price", "account_label", "note", "created_at",
+            ])
+            try insert(state["quotes"], into: "quotes", columns: [
+                "market", "symbol", "name", "price", "prev_close", "currency", "quoted_at", "source", "fetched_at", "ok", "message",
+            ])
+            try insert(state["properties"], into: "properties", columns: [
+                "id", "name", "kind", "city", "address", "area_sqm", "acquired_on", "purchase_price",
+                "current_value", "valued_on", "mortgage_balance", "monthly_rent", "note", "created_at",
+            ])
+            try insert(state["expenses"], into: "expenses", columns: ["id", "category_id", "occurred_on", "amount", "payee", "note", "created_at"])
+            try insert(state["budgets"], into: "budget_lines", columns: ["id", "year", "category_id", "amount", "note"])
+            var fx: [String: FXQuote] = [:]
+            for row in state["fx"] as? [[String: Any]] ?? [] {
+                guard let code = row["code"] as? String else { continue }
+                fx[code] = FXQuote(
+                    rate: (row["rate"] as? NSNumber)?.doubleValue,
+                    source: row["source"] as? String ?? "",
+                    at: row["quoted_at"] as? String ?? ""
+                )
+            }
+            if !fx.isEmpty { saveFX(fx) }
+            try exec("COMMIT")
+        } catch {
+            try? exec("ROLLBACK")
+            throw error
+        }
+    }
+
+    /// Empties the ledger back to a fresh install, keeping settings such as the Finnhub token.
+    func clearRecords() throws {
+        try exec("BEGIN IMMEDIATE")
+        do {
+            try wipeTables()
+            for (index, name) in LedgerKind.categories.enumerated() {
+                try run("INSERT INTO expense_categories(name, sort_order) VALUES(?, ?)", [.text(name), .int(Int64(index))])
+            }
+            let blank = FXQuote(rate: nil, source: "未设置", at: "")
+            saveFX(["USD": blank, "HKD": blank])
+            try exec("COMMIT")
+        } catch {
+            try? exec("ROLLBACK")
+            throw error
+        }
+    }
+
+    private func wipeTables() throws {
+        try exec("""
+        DELETE FROM expenses; DELETE FROM budget_lines; DELETE FROM balance_entries; DELETE FROM accounts;
+        DELETE FROM holdings; DELETE FROM properties; DELETE FROM quotes; DELETE FROM expense_categories;
+        """)
+    }
+
+    private func insert(_ list: Any?, into table: String, columns: [String]) throws {
+        let marks = Array(repeating: "?", count: columns.count).joined(separator: ", ")
+        let sql = "INSERT INTO \(table)(\(columns.joined(separator: ", "))) VALUES(\(marks))"
+        for row in list as? [[String: Any]] ?? [] {
+            try run(sql, columns.map { Self.sqlValue(row[$0]) })
+        }
+    }
+
+    private static func sqlValue(_ value: Any?) -> SQLValue {
+        switch value {
+        case let text as String:
+            return .text(text)
+        case let number as NSNumber:
+            return CFNumberIsFloatType(number) ? .real(number.doubleValue) : .int(number.int64Value)
+        default:
+            return .null
+        }
+    }
+
     func portfolioSummary(on today: Date = .now) -> PortfolioSummary {
         let rates = fxRates()
         let day = FiFormat.day(today)

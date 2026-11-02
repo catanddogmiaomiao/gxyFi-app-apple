@@ -8,28 +8,38 @@ struct FormSheet<Content: View>: View {
     @ViewBuilder var content: () -> Content
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text(title).font(.custom("Palatino", size: 22)).foregroundStyle(FiColor.cream)
-            content()
-            if let error {
-                Text(error).font(.system(size: 12)).foregroundStyle(FiColor.up)
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    content()
+                    if let error {
+                        Text(error).font(.system(size: 13)).foregroundStyle(FiColor.up)
+                    }
+                }
+                .padding(16)
             }
-            HStack {
-                Spacer()
-                FiButton(title: "取消", action: onCancel)
-                FiButton(title: "保存", kind: .primary, action: onSave)
+            .scrollDismissesKeyboard(.interactively)
+            .background(FiColor.background)
+            .navigationTitle(title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消", action: onCancel)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("保存", action: onSave)
+                }
             }
         }
-        .padding(22)
-        .frame(minWidth: 480)
-        .background(FiColor.background)
+        .preferredColorScheme(.dark)
+        .presentationDragIndicator(.visible)
     }
 }
 
 struct FieldLabel: View {
     var title: String
     var body: some View {
-        Text(title).frame(width: 88, alignment: .trailing).foregroundStyle(FiColor.muted)
+        Text(title).font(.system(size: 13)).foregroundStyle(FiColor.muted)
     }
 }
 
@@ -98,7 +108,7 @@ struct BalanceForm: View {
         .onAppear {
             accountID = initial?.accountID ?? presetAccountID ?? accounts.first?.id ?? 0
             if let text = initial?.asOfDate, let parsed = FiFormat.parseDay(text) { date = parsed }
-            balance = initial.map { String($0.balance) } ?? ""
+            balance = initial.map { decimalText($0.balance) } ?? ""
             note = initial?.note ?? ""
         }
     }
@@ -397,11 +407,15 @@ struct FXForm: View {
 }
 
 private func formRow<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
-    HStack(alignment: .center, spacing: 12) {
+    VStack(alignment: .leading, spacing: 6) {
         FieldLabel(title: title)
-        content().textFieldStyle(.plain).foregroundStyle(FiColor.cream)
+        content()
+            .textFieldStyle(.plain)
+            .foregroundStyle(FiColor.cream)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
-    .padding(8)
+    .padding(10)
+    .frame(maxWidth: .infinity, alignment: .leading)
     .background(FiColor.field)
     .overlay(RoundedRectangle(cornerRadius: 4).stroke(FiColor.line))
 }

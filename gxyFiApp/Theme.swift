@@ -30,10 +30,10 @@ struct FiButton: View {
     var body: some View {
         Button(title, action: action)
             .buttonStyle(.plain)
-            .font(.system(size: 13, weight: kind == .primary ? .semibold : .regular))
+            .font(.system(size: 15, weight: kind == .primary ? .semibold : .regular))
             .foregroundStyle(foreground)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
             .background(background)
             .overlay(RoundedRectangle(cornerRadius: 4).stroke(border, lineWidth: kind == .primary ? 0 : 1))
             .clipShape(RoundedRectangle(cornerRadius: 4))
@@ -65,19 +65,25 @@ struct PageChrome<Toolbar: View, Content: View>: View {
     @ViewBuilder var content: () -> Content
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 10) {
             Text(title)
-                .font(.custom("Palatino", size: 24))
+                .font(.custom("Palatino", size: 28))
                 .foregroundStyle(FiColor.cream)
             Text(subtitle)
-                .font(.system(size: 12))
+                .font(.system(size: 13))
                 .foregroundStyle(FiColor.muted)
                 .fixedSize(horizontal: false, vertical: true)
-            HStack(spacing: 8) { toolbar() }
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) { toolbar() }
+            }
             content()
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
-        .padding(28)
+        .padding(.horizontal, 16)
+        .padding(.top, 8)
+        .padding(.bottom, 8)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(FiColor.background)
     }
 }
 
@@ -111,45 +117,57 @@ struct FiTable<Row: Identifiable>: View {
     var cells: (Row) -> [(String, Color)]
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 0) {
-                ForEach(columns, id: \.self) { column in
-                    Text(column)
-                        .font(.system(size: 12))
-                        .foregroundStyle(FiColor.gold)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 8)
-                }
-            }
-            .padding(.vertical, 8)
-            .background(Color(red: 0x1A / 255, green: 0x16 / 255, blue: 0x0F / 255))
-            ScrollView {
-                LazyVStack(spacing: 0) {
-                    ForEach(rows) { row in
-                        let selected = row.id == selection
-                        HStack(spacing: 0) {
-                            ForEach(Array(cells(row).enumerated()), id: \.offset) { _, cell in
-                                Text(cell.0)
-                                    .font(.system(size: 13))
-                                    .foregroundStyle(cell.1)
-                                    .lineLimit(1)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .padding(.horizontal, 8)
+        GeometryReader { proxy in
+            ScrollView(.horizontal, showsIndicators: false) {
+                VStack(spacing: 0) {
+                    HStack(spacing: 0) {
+                        ForEach(columns, id: \.self) { column in
+                            Text(column)
+                                .font(.system(size: 12))
+                                .foregroundStyle(FiColor.gold)
+                                .frame(width: columnWidth, alignment: .leading)
+                                .padding(.horizontal, 8)
+                        }
+                    }
+                    .padding(.vertical, 8)
+                    .background(Color(red: 0x1A / 255, green: 0x16 / 255, blue: 0x0F / 255))
+                    ScrollView {
+                        LazyVStack(spacing: 0) {
+                            ForEach(rows) { row in
+                                let selected = row.id == selection
+                                HStack(spacing: 0) {
+                                    ForEach(Array(cells(row).enumerated()), id: \.offset) { _, cell in
+                                        Text(cell.0)
+                                            .font(.system(size: 15))
+                                            .foregroundStyle(cell.1)
+                                            .lineLimit(1)
+                                            .frame(width: columnWidth, alignment: .leading)
+                                            .padding(.horizontal, 8)
+                                    }
+                                }
+                                .padding(.vertical, 12)
+                                .background(selected ? Color(red: 0x2A / 255, green: 0x24 / 255, blue: 0x18 / 255) : Color.clear)
+                                .contentShape(Rectangle())
+                                .onTapGesture { onSelect(row.id) }
+                                .contextMenu {
+                                    if onOpen != nil {
+                                        Button("编辑") { onOpen?(row.id) }
+                                    }
+                                }
                             }
                         }
-                        .padding(.vertical, 8)
-                        .background(selected ? Color(red: 0x2A / 255, green: 0x24 / 255, blue: 0x18 / 255) : Color.clear)
-                        .contentShape(Rectangle())
-                        .onTapGesture { onSelect(row.id) }
-                        .onTapGesture(count: 2) { onOpen?(row.id) }
                     }
                 }
+                .frame(minWidth: max(proxy.size.width, CGFloat(columns.count) * columnWidth))
+                .frame(height: proxy.size.height)
             }
         }
         .background(Color(red: 0x12 / 255, green: 0x17 / 255, blue: 0x1F / 255))
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(FiColor.line))
         .clipShape(RoundedRectangle(cornerRadius: 8))
     }
+
+    private var columnWidth: CGFloat { 108 }
 }
 
 struct MixBar: View {

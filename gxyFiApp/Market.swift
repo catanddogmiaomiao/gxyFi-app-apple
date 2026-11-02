@@ -344,7 +344,7 @@ enum Market {
         var source: String
     }
 
-    nonisolated private static let userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+    nonisolated private static let userAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1"
     nonisolated private static let shPrefixes = ["60", "68", "69", "50", "51", "52", "56", "58", "11", "90"]
     nonisolated private static let szPrefixes = ["00", "30", "12", "15", "16", "18", "20"]
     nonisolated private static let bjPrefixes = ["43", "83", "87", "92"]

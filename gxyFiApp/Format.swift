@@ -3,15 +3,26 @@ import Foundation
 enum FiFormat {
     nonisolated static func price(_ value: Double?) -> String {
         guard let value else { return "—" }
-        var text = String(format: "%,.4f", value)
-        while text.contains("."), text.last == "0" { text.removeLast() }
-        if text.last == "." { text.removeLast() }
-        return text
+        return grouped(value, minDigits: 0, maxDigits: 4)
     }
 
     nonisolated static func money(_ value: Double?, digits: Int = 2) -> String {
         guard let value else { return "—" }
-        return String(format: "%,.\(digits)f", value)
+        return grouped(value, minDigits: digits, maxDigits: digits)
+    }
+
+    nonisolated private static func grouped(_ value: Double, minDigits: Int, maxDigits: Int) -> String {
+        let formatter = NumberFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.numberStyle = .decimal
+        formatter.usesGroupingSeparator = true
+        formatter.groupingSeparator = ","
+        formatter.groupingSize = 3
+        formatter.decimalSeparator = "."
+        formatter.minimumFractionDigits = minDigits
+        formatter.maximumFractionDigits = maxDigits
+        formatter.roundingMode = .halfUp
+        return formatter.string(from: NSNumber(value: value)) ?? String(format: "%.\(maxDigits)f", value)
     }
 
     nonisolated static func cny(_ value: Double?) -> String {

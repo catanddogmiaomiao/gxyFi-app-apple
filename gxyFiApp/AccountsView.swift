@@ -28,7 +28,7 @@ struct AccountsView: View {
             FiButton(title: "录入余额", kind: .primary) { addBalance() }
             FiButton(title: "删除这条余额", kind: .danger) { deleteBalance = selectedBalance != nil }
         } content: {
-            HStack(spacing: 12) {
+            VStack(spacing: 12) {
                 FiTable(
                     columns: ["账户", "机构", "类型", "币种", "最近余额", "截止日期", "距今", "折合人民币"],
                     rows: model.summary.accounts,
@@ -63,39 +63,32 @@ struct AccountsView: View {
                         [(row.asOfDate, FiColor.ink), (FiFormat.money(row.balance), FiColor.ink), (row.note, FiColor.ink)]
                     }
                 }
-                .frame(minWidth: 320)
+                .frame(height: 220)
             }
         }
         .sheet(item: $sheet) { item in
             switch item {
             case .account(let account):
                 AccountForm(initial: account, onCancel: { sheet = nil }) { input in
-                    model.perform { _ = try model.ledger.saveAccount(input, id: account?.id) }
+                    model.saveAccount(input, id: account?.id)
                     sheet = nil
                 }
             case .balance(let balance):
                 BalanceForm(accounts: model.summary.accounts, initial: balance, presetAccountID: model.selectedAccountID, onCancel: { sheet = nil }) { input in
-                    model.perform { try model.ledger.saveBalance(input, id: balance?.id) }
+                    model.saveBalance(input, id: balance?.id)
                     sheet = nil
                 }
             }
         }
         .confirmationDialog("删除账户会同时删除它的全部余额快照。", isPresented: $confirmDelete, titleVisibility: .visible) {
             Button("删除", role: .destructive) {
-                if let id = model.selectedAccountID {
-                    model.ledger.deleteAccount(id)
-                    model.selectedAccountID = nil
-                    model.reload()
-                }
+                if let id = model.selectedAccountID { model.deleteAccount(id) }
             }
             Button("取消", role: .cancel) {}
         }
         .confirmationDialog("删除这条余额快照？", isPresented: $deleteBalance, titleVisibility: .visible) {
             Button("删除", role: .destructive) {
-                if let id = selectedBalanceID {
-                    model.ledger.deleteBalance(id)
-                    model.reload()
-                }
+                if let id = selectedBalanceID { model.deleteBalance(id) }
             }
             Button("取消", role: .cancel) {}
         }
@@ -137,7 +130,7 @@ struct HoldingsView: View {
     var body: some View {
         PageChrome(
             title: "投资",
-            subtitle: "黄金按克、股票按股。填了手工现价就用手工现价；留空则用右上角刷新到的行情。Au(T+D) 的价格是人民币/克。"
+            subtitle: "黄金按克、股票按股。填了手工现价就用手工现价；留空则用刷新到的行情。Au(T+D) 的价格是人民币/克。"
         ) {
             FiButton(title: "新增持仓", kind: .primary) { sheet = .some(nil); showing = true }
             FiButton(title: "编辑") { edit() }
@@ -163,19 +156,13 @@ struct HoldingsView: View {
         .sheet(isPresented: $showing) {
             HoldingForm(initial: sheet ?? nil, onCancel: { showing = false }) { input in
                 let editing = sheet ?? nil
-                model.perform {
-                    let prepared = try Market.prepare(input)
-                    _ = try model.ledger.saveHolding(prepared, id: editing?.id)
-                }
+                model.saveHolding(input, id: editing?.id)
                 showing = false
             }
         }
         .confirmationDialog("删除这笔持仓？行情缓存还会留着。", isPresented: $confirm, titleVisibility: .visible) {
             Button("删除", role: .destructive) {
-                if let id = selectedID {
-                    model.ledger.deleteHolding(id)
-                    model.reload()
-                }
+                if let id = selectedID { model.deleteHolding(id) }
             }
             Button("取消", role: .cancel) {}
         }
@@ -226,16 +213,13 @@ struct PropertyView: View {
         }
         .sheet(isPresented: $showing) {
             PropertyForm(initial: isNew ? nil : editing, onCancel: { showing = false }) { input in
-                model.perform { _ = try model.ledger.saveProperty(input, id: isNew ? nil : editing?.id) }
+                model.saveProperty(input, id: isNew ? nil : editing?.id)
                 showing = false
             }
         }
         .confirmationDialog("删除这处不动产？", isPresented: $confirm, titleVisibility: .visible) {
             Button("删除", role: .destructive) {
-                if let id = selectedID {
-                    model.ledger.deleteProperty(id)
-                    model.reload()
-                }
+                if let id = selectedID { model.deleteProperty(id) }
             }
             Button("取消", role: .cancel) {}
         }

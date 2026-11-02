@@ -32,7 +32,7 @@ struct ExpensesView: View {
                 ForEach(months, id: \.self, content: Text.init)
             }
             .labelsHidden()
-            .frame(width: 140)
+            .pickerStyle(.menu)
             FiButton(title: "记一笔", kind: .primary) { isNew = true; editing = nil; showingExpense = true }
             FiButton(title: "编辑") { open() }
             FiButton(title: "删除", kind: .danger) { confirm = selected != nil }
@@ -55,22 +55,19 @@ struct ExpensesView: View {
         }
         .sheet(isPresented: $showingExpense) {
             ExpenseForm(categories: model.categories, initial: isNew ? nil : editing, onCancel: { showingExpense = false }) { input in
-                model.perform { try model.ledger.saveExpense(input, id: isNew ? nil : editing?.id) }
+                model.saveExpense(input, id: isNew ? nil : editing?.id)
                 showingExpense = false
             }
         }
         .sheet(isPresented: $showingCategory) {
             CategoryForm(onCancel: { showingCategory = false }) { name in
-                model.perform { _ = try model.ledger.saveCategory(name) }
+                model.saveCategory(name)
                 showingCategory = false
             }
         }
         .confirmationDialog("删除这笔支出？", isPresented: $confirm, titleVisibility: .visible) {
             Button("删除", role: .destructive) {
-                if let id = selectedID {
-                    model.ledger.deleteExpense(id)
-                    model.reload()
-                }
+                if let id = selectedID { model.deleteExpense(id) }
             }
             Button("取消", role: .cancel) {}
         }
@@ -105,7 +102,7 @@ struct BudgetView: View {
                 ForEach((2000...2100), id: \.self) { Text(String($0)).tag($0) }
             }
             .labelsHidden()
-            .frame(width: 100)
+            .pickerStyle(.menu)
             FiButton(title: "设置预算", kind: .primary) { open() }
             FiButton(title: "复制上一年") { confirm = true }
             Text("预算 \(FiFormat.cny(planned)) · 已支出 \(FiFormat.cny(actual)) · \(planned == 0 ? "—" : FiFormat.percent(actual / planned))")
@@ -128,22 +125,17 @@ struct BudgetView: View {
         }
         .onAppear(perform: reload)
         .onChange(of: year) { _, _ in reload() }
-        .onChange(of: model.summary.today) { _, _ in reload() }
+        .onChange(of: model.revision) { _, _ in reload() }
         .sheet(isPresented: $showing) {
             if let row = rows.first(where: { $0.id == selectedID }) {
                 BudgetForm(category: row.category, amount: row.planned, note: row.note, onCancel: { showing = false }) { amount, note in
-                    model.ledger.saveBudget(year: year, categoryID: row.id, amount: amount, note: note)
-                    model.reload()
-                    reload()
+                    model.saveBudget(year: year, categoryID: row.id, amount: amount, note: note)
                     showing = false
                 }
             }
         }
         .confirmationDialog("用 \(year - 1) 年的预算覆盖 \(year) 年？", isPresented: $confirm, titleVisibility: .visible) {
-            Button("覆盖") {
-                model.perform { _ = try model.ledger.copyBudget(from: year - 1, to: year) }
-                reload()
-            }
+            Button("覆盖") { model.copyBudget(from: year - 1, to: year) }
             Button("取消", role: .cancel) {}
         }
     }
@@ -178,13 +170,20 @@ struct MarketView: View {
             Text("\(rateText("USD", fx))    \(rateText("HKD", fx))    \(token)")
                 .font(.system(size: 12)).foregroundStyle(FiColor.muted)
         } content: {
-            HStack {
-                Picker("", selection: $market) {
-                    Text("黄金").tag("GOLD")
-                    Text("A股").tag("A")
-                    Text("美股").tag("US")
-                }.labelsHidden().frame(width: 100)
-                TextField("Au(T+D) / 600519 / AAPL", text: $symbol).textFieldStyle(.plain)
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Picker("", selection: $market) {
+                        Text("黄金").tag("GOLD")
+                        Text("A股").tag("A")
+                        Text("美股").tag("US")
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                    TextField("Au(T+D) / 600519 / AAPL", text: $symbol)
+                        .textFieldStyle(.plain)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                }
                 FiButton(title: looking ? "查询中…" : "查询这个代码", disabled: looking) { lookup() }
             }
             Text(result).font(.system(size: 12)).foregroundStyle(FiColor.muted)
@@ -211,12 +210,9 @@ struct MarketView: View {
         }
         .sheet(isPresented: $showingFX) {
             FXForm(fx: model.summary.fx, onCancel: { showingFX = false }) { usd, hkd, token, clear in
-                var updates: [String: FXQuote] = [:]
-                updates["USD"] = FXQuote(rate: usd, source: usd == nil ? "未设置" : "手工", at: usd == nil ? "" : FiFormat.stamp())
-                updates["HKD"] = FXQuote(rate: hkd, source: hkd == nil ? "未设置" : "手工", at: hkd == nil ? "" : FiFormat.stamp())
-                model.ledger.saveFX(updates)
                 if clear { model.ledger.setSetting("finnhub_token", "") }
                 else if !token.trimmingCharacters(in: .whitespaces).isEmpty { model.ledger.setSetting("finnhub_token", token.trimmingCharacters(in: .whitespaces)) }
+                model.saveFX(usd: usd, hkd: hkd)
                 model.reload()
                 showingFX = false
             }

@@ -8,32 +8,41 @@ struct DashboardView: View {
         let missing = missingNotes(summary)
         PageChrome(
             title: "总览",
-            subtitle: "储蓄看最近一次手工余额，投资看持仓乘以现价，不动产看现值减去贷款。右上角可以导出全部 Excel。本机账本不会自动上传到网站。"
+            subtitle: "储蓄看最近一次手工余额，投资看持仓乘以现价，不动产看现值减去贷款。" + model.storageLabel
         ) {
-            EmptyView()
+            FiButton(title: model.refreshing ? "刷新中…" : "刷新行情", disabled: model.refreshing) {
+                model.refreshQuotes()
+            }
+            FiButton(title: "导出 Excel", kind: .primary) { model.exportExcel() }
         } content: {
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 3), spacing: 12) {
-                MetricCard(title: "储蓄", value: FiFormat.cny(summary.savingsCNY), note: "\(summary.accounts.count) 个账户" + (summary.savingsMissing ? " · 有余额未折算" : ""))
-                MetricCard(title: "投资", value: FiFormat.cny(summary.investCNY), note: "\(summary.holdings.count) 笔持仓" + (summary.unpriced > 0 ? " · \(summary.unpriced) 笔无价格" : ""))
-                MetricCard(title: "不动产净值", value: FiFormat.cny(summary.propertyEquityCNY), note: "登记月租金 \(FiFormat.cny(summary.rentMonthly))")
-                MetricCard(title: "净资产", value: FiFormat.cny(summary.netCNY), note: missing.isEmpty ? "储蓄 + 投资 + 不动产净值" : missing.joined(separator: " · "))
-                MetricCard(title: "本月支出", value: FiFormat.cny(summary.monthExpense), note: String(summary.today.prefix(7)))
-                MetricCard(
-                    title: "本年预算",
-                    value: FiFormat.cny(summary.budgetTotal),
-                    note: "已支出 \(FiFormat.cny(summary.yearExpense)) · " + (summary.budgetTotal == 0 ? "尚未设置预算" : "已用 \(FiFormat.percent(summary.budgetRatio))")
-                )
-            }
-            HStack(alignment: .top, spacing: 12) {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("资产结构").font(.system(size: 12)).foregroundStyle(FiColor.gold)
-                    MixBar(parts: [("储蓄", summary.savingsCNY), ("投资", summary.investCNY), ("不动产", summary.propertyEquityCNY)])
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text(model.fxLabel)
+                        .font(.system(size: 12))
+                        .foregroundStyle(FiColor.muted)
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 2), spacing: 12) {
+                        MetricCard(title: "储蓄", value: FiFormat.cny(summary.savingsCNY), note: "\(summary.accounts.count) 个账户" + (summary.savingsMissing ? " · 有余额未折算" : ""))
+                        MetricCard(title: "投资", value: FiFormat.cny(summary.investCNY), note: "\(summary.holdings.count) 笔持仓" + (summary.unpriced > 0 ? " · \(summary.unpriced) 笔无价格" : ""))
+                        MetricCard(title: "不动产净值", value: FiFormat.cny(summary.propertyEquityCNY), note: "登记月租金 \(FiFormat.cny(summary.rentMonthly))")
+                        MetricCard(title: "净资产", value: FiFormat.cny(summary.netCNY), note: missing.isEmpty ? "储蓄 + 投资 + 不动产净值" : missing.joined(separator: " · "))
+                        MetricCard(title: "本月支出", value: FiFormat.cny(summary.monthExpense), note: String(summary.today.prefix(7)))
+                        MetricCard(
+                            title: "本年预算",
+                            value: FiFormat.cny(summary.budgetTotal),
+                            note: "已支出 \(FiFormat.cny(summary.yearExpense)) · " + (summary.budgetTotal == 0 ? "尚未设置预算" : "已用 \(FiFormat.percent(summary.budgetRatio))")
+                        )
+                    }
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("资产结构").font(.system(size: 12)).foregroundStyle(FiColor.gold)
+                        MixBar(parts: [("储蓄", summary.savingsCNY), ("投资", summary.investCNY), ("不动产", summary.propertyEquityCNY)])
+                        MonthBars(points: summary.monthlyExpenses)
+                    }
+                    Text(staleText(summary))
+                        .font(.system(size: 12))
+                        .foregroundStyle(FiColor.muted)
                 }
-                MonthBars(points: summary.monthlyExpenses)
+                .padding(.bottom, 16)
             }
-            Text(staleText(summary))
-                .font(.system(size: 12))
-                .foregroundStyle(FiColor.muted)
         }
     }
 
