@@ -203,6 +203,7 @@ struct PortfolioSummary: Equatable {
     var savingsCNY: Double
     var savingsMissing: Bool
     var holdings: [HoldingRecord]
+    var dcaPlans: [DCAPlanRecord]
     var investCNY: Double
     var investMissing: Bool
     var unpriced: Int
@@ -652,6 +653,90 @@ final class Ledger {
         } ?? []
     }
 
+    // MARK: - 基金定投
+
+    func dcaPlans() -> [DCAPlanRecord] {
+        (try? rows("SELECT * FROM dca_plans ORDER BY status, symbol, id"))?.map {
+            DCAPlanRecord(
+                id: $0.int("id"), name: $0.text("name"), symbol: $0.text("symbol"), amount: $0.real("amount") ?? 0,
+                cycle: $0.text("cycle"), debitDay: Int($0.int("debit_day")), status: $0.text("status"),
+                startedOn: $0.optionalText("started_on"), manualNav: $0.real("manual_nav"), note: $0.text("note")
+            )
+        } ?? []
+    }
+
+    func dcaRecords(planID: Int64? = nil) -> [DCARecord] {
+        let sql = "SELECT * FROM dca_records" + (planID == nil ? "" : " WHERE plan_id=?") + " ORDER BY trade_date, id"
+        return (try? rows(sql, planID.map { [.int($0)] } ?? []))?.map {
+            DCARecord(
+                id: $0.int("id"), planID: $0.int("plan_id"), kind: $0.text("kind"), tradeDate: $0.text("trade_date"),
+                amount: $0.real("amount") ?? 0, nav: $0.real("nav"), shares: $0.real("shares") ?? 0,
+                fee: $0.real("fee") ?? 0, note: $0.text("note")
+            )
+        } ?? []
+    }
+
+    /// 每个计划的份额、成本、净值、市值和浮盈；同时返回市值合计和有份额却没有净值的计划数。
+    func valuedPlans() -> (rows: [DCAPlanRecord], total: Double, unpriced: Int) {
+        let grouped = Dictionary(grouping: dcaRecords(), by: \.planID)
+        let rows = dcaPlans().map { DCA.value($0, records: grouped[$0.id] ?? []) }
+        let total = rows.reduce(0) { $0 + ($1.marketValue ?? 0) }
+        return (rows, DCA.round2(total), rows.filter { $0.shares > 0 && $0.nav == nil }.count)
+    }
+
+    @discardableResult
+    func saveDCAPlan(_ input: DCAPlanInput, id: Int64?) throws -> Int64 {
+        let plan = try DCA.preparePlan(input)
+        let fields: [SQLValue] = [
+            .text(plan.name), .text(plan.symbol), .real(plan.amount), .text(plan.cycle), .int(Int64(plan.debitDay)),
+            .text(plan.status), plan.startedOn.map(SQLValue.text) ?? .null, plan.manualNav.map(SQLValue.real) ?? .null, .text(plan.note),
+        ]
+        if let id {
+            try run(
+                "UPDATE dca_plans SET name=?, symbol=?, amount=?, cycle=?, debit_day=?, status=?, started_on=?, manual_nav=?, note=? WHERE id=?",
+                fields + [.int(id)]
+            )
+            return id
+        }
+        try run(
+            "INSERT INTO dca_plans(name, symbol, amount, cycle, debit_day, status, started_on, manual_nav, note, created_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            fields + [.text(FiFormat.stamp())]
+        )
+        return sqlite3_last_insert_rowid(handle)
+    }
+
+    func deleteDCAPlan(_ id: Int64) {
+        try? run("DELETE FROM dca_records WHERE plan_id=?", [.int(id)])
+        try? run("DELETE FROM dca_plans WHERE id=?", [.int(id)])
+    }
+
+    func saveDCARecord(_ input: DCARecordInput, planID: Int64, id: Int64?) throws {
+        let record = try DCA.normalizeRecord(input)
+        let draft = DCARecord(
+            id: id ?? Int64.max, planID: planID, kind: record.kind, tradeDate: record.tradeDate, amount: record.amount ?? 0,
+            nav: record.nav, shares: record.shares ?? 0, fee: record.fee ?? 0, note: record.note
+        )
+        try DCA.applyPosition(dcaRecords(planID: planID).filter { $0.id != id } + [draft])
+        let fields: [SQLValue] = [
+            .int(planID), .text(draft.kind), .text(draft.tradeDate), .real(draft.amount),
+            draft.nav.map(SQLValue.real) ?? .null, .real(draft.shares), .real(draft.fee), .text(draft.note),
+        ]
+        if let id {
+            try run("UPDATE dca_records SET plan_id=?, kind=?, trade_date=?, amount=?, nav=?, shares=?, fee=?, note=? WHERE id=?", fields + [.int(id)])
+            return
+        }
+        try run(
+            "INSERT INTO dca_records(plan_id, kind, trade_date, amount, nav, shares, fee, note, created_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            fields + [.text(FiFormat.stamp())]
+        )
+    }
+
+    func deleteDCARecord(_ id: Int64) throws {
+        guard let current = dcaRecords().first(where: { $0.id == id }) else { return }
+        try DCA.applyPosition(dcaRecords(planID: current.planID).filter { $0.id != id })
+        try run("DELETE FROM dca_records WHERE id=?", [.int(id)])
+    }
+
     func balanceEntries() -> [BalanceRecord] {
         (try? rows("SELECT * FROM balance_entries ORDER BY as_of_date, id"))?.map(balanceRow) ?? []
     }
@@ -663,7 +748,7 @@ final class Ledger {
     }
 
     func recordCount() -> Int {
-        let tables = ["accounts", "balance_entries", "holdings", "properties", "expenses", "budget_lines"]
+        let tables = ["accounts", "balance_entries", "holdings", "properties", "expenses", "budget_lines", "dca_plans", "dca_records"]
         return tables.reduce(0) { total, table in
             total + Int((try? rows("SELECT COUNT(*) AS n FROM \(table)").first?.int("n")) ?? 0)
         }
@@ -694,6 +779,12 @@ final class Ledger {
             ])
             try insert(state["expenses"], into: "expenses", columns: ["id", "category_id", "occurred_on", "amount", "payee", "note", "created_at"])
             try insert(state["budgets"], into: "budget_lines", columns: ["id", "year", "category_id", "amount", "note"])
+            try insert(state["dcaPlans"], into: "dca_plans", columns: [
+                "id", "name", "symbol", "amount", "cycle", "debit_day", "status", "started_on", "manual_nav", "note", "created_at",
+            ])
+            try insert(state["dcaRecords"], into: "dca_records", columns: [
+                "id", "plan_id", "kind", "trade_date", "amount", "nav", "shares", "fee", "note", "created_at",
+            ])
             var fx: [String: FXQuote] = [:]
             for row in state["fx"] as? [[String: Any]] ?? [] {
                 guard let code = row["code"] as? String else { continue }
@@ -730,7 +821,7 @@ final class Ledger {
 
     private func wipeTables() throws {
         try exec("""
-        DELETE FROM expenses; DELETE FROM budget_lines; DELETE FROM balance_entries; DELETE FROM accounts;
+        DELETE FROM dca_records; DELETE FROM dca_plans; DELETE FROM expenses; DELETE FROM budget_lines; DELETE FROM balance_entries; DELETE FROM accounts;
         DELETE FROM holdings; DELETE FROM properties; DELETE FROM quotes; DELETE FROM expense_categories;
         """)
     }
@@ -822,6 +913,8 @@ final class Ledger {
         for index in valued.indices {
             valued[index].weight = valued[index].cny.flatMap { invest == 0 ? nil : $0 / invest }
         }
+        let plans = valuedPlans()
+        invest += plans.total
 
         var properties: [PropertyRecord] = []
         var equityTotal = 0.0
@@ -848,8 +941,8 @@ final class Ledger {
         let yearExpense = expenseTotal(start: "\(year)-01-01", end: "\(year + 1)-01-01")
         return PortfolioSummary(
             accounts: accounts, savingsCNY: savings, savingsMissing: savingsMissing,
-            holdings: valued, investCNY: invest, investMissing: investMissing,
-            unpriced: valued.filter { $0.price == nil }.count,
+            holdings: valued, dcaPlans: plans.rows, investCNY: invest, investMissing: investMissing,
+            unpriced: valued.filter { $0.price == nil }.count + plans.unpriced,
             properties: properties, propertyEquityCNY: equityTotal, propertyMissing: propertyMissing,
             rentMonthly: rentTotal,
             monthExpense: expenseTotal(start: FiFormat.day(monthStart), end: FiFormat.day(monthEnd)),
@@ -1021,5 +1114,13 @@ final class Ledger {
     CREATE TABLE IF NOT EXISTS budget_lines (
         id INTEGER PRIMARY KEY, year INTEGER NOT NULL, category_id INTEGER NOT NULL REFERENCES expense_categories(id),
         amount REAL NOT NULL, note TEXT NOT NULL DEFAULT '', UNIQUE (year, category_id));
+    CREATE TABLE IF NOT EXISTS dca_plans (
+        id INTEGER PRIMARY KEY, name TEXT NOT NULL, symbol TEXT NOT NULL, amount REAL NOT NULL,
+        cycle TEXT NOT NULL DEFAULT '每月', debit_day INTEGER NOT NULL DEFAULT 1, status TEXT NOT NULL DEFAULT '进行中',
+        started_on TEXT, manual_nav REAL, note TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS dca_records (
+        id INTEGER PRIMARY KEY, plan_id INTEGER NOT NULL REFERENCES dca_plans(id) ON DELETE CASCADE,
+        kind TEXT NOT NULL, trade_date TEXT NOT NULL, amount REAL NOT NULL DEFAULT 0, nav REAL,
+        shares REAL NOT NULL DEFAULT 0, fee REAL NOT NULL DEFAULT 0, note TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL);
     """
 }

@@ -126,42 +126,115 @@ struct HoldingsView: View {
     @State private var sheet: HoldingRecord??
     @State private var showing = false
     @State private var confirm = false
+    @State private var selectedID: Int64?
+    @State private var selectedPlanID: Int64?
+    @State private var selectedRecordID: Int64?
+    @State private var planSheet: DCAPlanRecord??
+    @State private var recordSheet: DCARecord??
+    @State private var confirmPlan = false
+    @State private var confirmRecord = false
 
     var body: some View {
         let holdings = model.summary.holdings
+        let plans = model.summary.dcaPlans
+        let records = model.dcaRecords.filter { $0.planID == selectedPlanID }
         PageChrome(
             title: "投资",
             subtitle: "收益率 = 现价 ÷ 成本价 − 1，按原币计算；成本、市值、浮盈按当前汇率折成人民币。当日涨跌看「行情」页。"
+                + "基金定投记在下面：先建计划，再记每一期确认。同一只基金不要在两处各记一份份额。"
         ) {
             FiButton(title: "新增持仓", kind: .primary) { sheet = .some(nil); showing = true }
             FiButton(title: "编辑") { edit() }
             FiButton(title: "删除", kind: .danger) { confirm = selected != nil }
         } content: {
-            VStack(alignment: .leading, spacing: 8) {
-                if !holdings.isEmpty {
-                    Text(totalsText(HoldingTotals(holdings)))
-                        .font(.system(size: 13))
+            ScrollView {
+                VStack(alignment: .leading, spacing: 10) {
+                    if !holdings.isEmpty {
+                        Text(totalsText(HoldingTotals(holdings)))
+                            .font(.system(size: 13))
+                            .foregroundStyle(FiColor.cream)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    FiTable(
+                        columns: ["名称", "代码", "市场", "数量", "成本价", "现价", "收益率", "成本¥", "市值¥", "浮盈¥", "占比", "来源"],
+                        rows: holdings,
+                        selection: selectedID,
+                        onSelect: { selectedID = $0 },
+                        onOpen: { _ in edit() }
+                    ) { row in
+                        [
+                            (row.name, FiColor.ink), (row.symbol, FiColor.ink),
+                            (LedgerKind.marketLabel[row.market] ?? row.market, FiColor.ink),
+                            (FiFormat.price(row.quantity), FiColor.ink),
+                            row.avgCost == nil ? ("未填", FiColor.flat) : (FiFormat.price(row.avgCost), FiColor.ink),
+                            (FiFormat.price(row.price), FiColor.ink), (FiFormat.percent(row.ret), .pnl(row.ret)),
+                            (FiFormat.cny(row.costCny), FiColor.ink), (FiFormat.cny(row.cny), FiColor.ink),
+                            (FiFormat.cny(row.pnlCny), .pnl(row.pnlCny)), (FiFormat.percent(row.weight), FiColor.ink),
+                            (sourceText(row), FiColor.ink),
+                        ]
+                    }
+                    .frame(height: tableHeight(holdings.count))
+
+                    Text("基金定投")
+                        .font(.custom("Palatino", size: 20))
                         .foregroundStyle(FiColor.cream)
+                        .padding(.top, 6)
+                    Text(planSummary(plans))
+                        .font(.system(size: 13))
+                        .foregroundStyle(FiColor.muted)
                         .fixedSize(horizontal: false, vertical: true)
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            FiButton(title: "新增计划", kind: .primary) { planSheet = .some(nil) }
+                            FiButton(title: "编辑计划") { editPlan() }
+                            FiButton(title: "删除计划", kind: .danger) { confirmPlan = selectedPlan != nil }
+                            FiButton(title: "记一笔", kind: .primary) { addRecord() }
+                            FiButton(title: "编辑记录") { editRecord() }
+                            FiButton(title: "删除记录", kind: .danger) { confirmRecord = selectedRecord != nil }
+                        }
+                    }
+                    FiTable(
+                        columns: ["基金", "代码", "每期", "周期", "状态", "份额", "成本", "净值", "市值¥", "浮盈¥"],
+                        rows: plans,
+                        selection: selectedPlanID,
+                        onSelect: { selectedPlanID = $0; selectedRecordID = nil },
+                        onOpen: { selectedPlanID = $0; editPlan() }
+                    ) { row in
+                        [
+                            (row.name, FiColor.ink), (row.symbol, FiColor.ink), (FiFormat.cny(row.amount), FiColor.ink),
+                            (row.cycleLabel, FiColor.ink), (row.status, row.status == "进行中" ? FiColor.ink : FiColor.flat),
+                            (FiFormat.price(row.shares), FiColor.ink), (FiFormat.cny(row.cost), FiColor.ink),
+                            (FiFormat.price(row.nav), FiColor.ink), (FiFormat.cny(row.marketValue), FiColor.ink),
+                            (FiFormat.cny(row.pnl), .pnl(row.pnl)),
+                        ]
+                    }
+                    .frame(height: tableHeight(plans.count))
+
+                    if let plan = selectedPlan {
+                        Text("「\(plan.name)」的确认记录 · \(records.count) 笔" + (plan.navSource.isEmpty ? "" : " · 净值来自\(plan.navSource)"))
+                            .font(.system(size: 13))
+                            .foregroundStyle(FiColor.cream)
+                        FiTable(
+                            columns: ["日期", "类型", "金额", "净值", "份额", "手续费", "备注"],
+                            rows: records,
+                            selection: selectedRecordID,
+                            onSelect: { selectedRecordID = $0 },
+                            onOpen: { selectedRecordID = $0; editRecord() }
+                        ) { row in
+                            [
+                                (row.tradeDate, FiColor.ink), (row.kind, FiColor.ink), (FiFormat.cny(row.amount), FiColor.ink),
+                                (FiFormat.price(row.nav), FiColor.ink), (FiFormat.price(row.shares), FiColor.ink),
+                                (FiFormat.cny(row.fee), FiColor.ink), (row.note, FiColor.ink),
+                            ]
+                        }
+                        .frame(height: tableHeight(records.count))
+                    } else if !plans.isEmpty {
+                        Text("点一个定投计划，查看每一期的确认记录。")
+                            .font(.system(size: 13))
+                            .foregroundStyle(FiColor.muted)
+                    }
                 }
-                FiTable(
-                    columns: ["名称", "代码", "市场", "数量", "成本价", "现价", "收益率", "成本¥", "市值¥", "浮盈¥", "占比", "来源"],
-                    rows: holdings,
-                    selection: selectedID,
-                    onSelect: { selectedID = $0 },
-                    onOpen: { _ in edit() }
-                ) { row in
-                    [
-                        (row.name, FiColor.ink), (row.symbol, FiColor.ink),
-                        (LedgerKind.marketLabel[row.market] ?? row.market, FiColor.ink),
-                        (FiFormat.price(row.quantity), FiColor.ink),
-                        row.avgCost == nil ? ("未填", FiColor.flat) : (FiFormat.price(row.avgCost), FiColor.ink),
-                        (FiFormat.price(row.price), FiColor.ink), (FiFormat.percent(row.ret), .pnl(row.ret)),
-                        (FiFormat.cny(row.costCny), FiColor.ink), (FiFormat.cny(row.cny), FiColor.ink),
-                        (FiFormat.cny(row.pnlCny), .pnl(row.pnlCny)), (FiFormat.percent(row.weight), FiColor.ink),
-                        (sourceText(row), FiColor.ink),
-                    ]
-                }
+                .padding(.bottom, 16)
             }
         }
         .sheet(isPresented: $showing) {
@@ -171,21 +244,64 @@ struct HoldingsView: View {
                 showing = false
             }
         }
+        .sheet(isPresented: Binding(get: { planSheet != nil }, set: { if !$0 { planSheet = nil } })) {
+            DCAPlanForm(initial: planSheet ?? nil, onCancel: { planSheet = nil }) { input in
+                model.saveDCAPlan(input, id: (planSheet ?? nil)?.id)
+                planSheet = nil
+            }
+        }
+        .sheet(isPresented: Binding(get: { recordSheet != nil }, set: { if !$0 { recordSheet = nil } })) {
+            DCARecordForm(initial: recordSheet ?? nil, onCancel: { recordSheet = nil }) { input in
+                if let planID = selectedPlanID {
+                    model.saveDCARecord(input, planID: planID, id: (recordSheet ?? nil)?.id)
+                }
+                recordSheet = nil
+            }
+        }
         .confirmationDialog("删除这笔持仓？行情缓存还会留着。", isPresented: $confirm, titleVisibility: .visible) {
             Button("删除", role: .destructive) {
                 if let id = selectedID { model.deleteHolding(id) }
             }
             Button("取消", role: .cancel) {}
         }
+        .confirmationDialog("删除这个定投计划？已经记下的确认记录会一起删除。", isPresented: $confirmPlan, titleVisibility: .visible) {
+            Button("删除", role: .destructive) {
+                if let id = selectedPlanID { model.deleteDCAPlan(id); selectedPlanID = nil }
+            }
+            Button("取消", role: .cancel) {}
+        }
+        .confirmationDialog("删除这条确认记录？", isPresented: $confirmRecord, titleVisibility: .visible) {
+            Button("删除", role: .destructive) {
+                if let id = selectedRecordID { model.deleteDCARecord(id); selectedRecordID = nil }
+            }
+            Button("取消", role: .cancel) {}
+        }
     }
 
-    @State private var selectedID: Int64?
     private var selected: HoldingRecord? { model.summary.holdings.first { $0.id == selectedID } }
+    private var selectedPlan: DCAPlanRecord? { model.summary.dcaPlans.first { $0.id == selectedPlanID } }
+    private var selectedRecord: DCARecord? { model.dcaRecords.first { $0.id == selectedRecordID && $0.planID == selectedPlanID } }
+
+    private func tableHeight(_ count: Int) -> CGFloat {
+        max(CGFloat(count) * 43 + 36, 100)
+    }
 
     private func totalsText(_ totals: HoldingTotals) -> String {
         var text = "市值 \(FiFormat.cny(totals.value)) · 成本 \(FiFormat.cny(totals.cost)) · 浮盈 \(FiFormat.signed(totals.pnl))"
         if let ret = totals.ret { text += "（\(FiFormat.percent(ret))）" }
         if totals.withoutCost > 0 { text += " · \(totals.withoutCost) 笔未填成本，不计入收益" }
+        return text
+    }
+
+    private func planSummary(_ plans: [DCAPlanRecord]) -> String {
+        guard !plans.isEmpty else { return "还没有定投计划。先点「新增计划」，再选中计划「记一笔」。只知道当前份额时记一笔期初。" }
+        let value = plans.reduce(0) { $0 + ($1.marketValue ?? 0) }
+        let priced = plans.filter { $0.marketValue != nil }
+        let cost = priced.reduce(0) { $0 + $1.cost }
+        var text = "\(plans.count) 个计划 · 市值 \(FiFormat.cny(value)) · 成本 \(FiFormat.cny(cost)) · 浮盈 \(FiFormat.signed(value - cost))"
+        if cost > 0 { text += "（\(FiFormat.percent((value - cost) / cost))）" }
+        let unpriced = plans.filter { $0.shares > 0 && $0.nav == nil }.count
+        if unpriced > 0 { text += " · \(unpriced) 个没有净值" }
         return text
     }
 
@@ -201,6 +317,30 @@ struct HoldingsView: View {
         }
         sheet = selected
         showing = true
+    }
+
+    private func editPlan() {
+        guard let plan = selectedPlan else {
+            model.alert = "请先选择一个定投计划。"
+            return
+        }
+        planSheet = plan
+    }
+
+    private func addRecord() {
+        guard selectedPlan != nil else {
+            model.alert = "请先选择一个定投计划。"
+            return
+        }
+        recordSheet = .some(nil)
+    }
+
+    private func editRecord() {
+        guard let record = selectedRecord else {
+            model.alert = selectedPlan == nil ? "请先选择一个定投计划。" : "请先选择一条确认记录。"
+            return
+        }
+        recordSheet = record
     }
 }
 

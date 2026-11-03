@@ -182,6 +182,26 @@ enum CloudUpload {
             sent += 1
         }
 
+        var planIDs: [Int64: Int64] = [:]
+        for plan in ledger.dcaPlans() {
+            let before = state
+            state = try await client.mutate("dca_plan", op: "create", data: planData(DCAPlanInput(
+                name: plan.name, symbol: plan.symbol, amount: plan.amount, cycle: plan.cycle, debitDay: plan.debitDay,
+                status: plan.status, startedOn: plan.startedOn, manualNav: plan.manualNav, note: plan.note
+            )))
+            planIDs[plan.id] = newID("dcaPlans", before: before, after: state)
+            sent += 1
+        }
+
+        for record in ledger.dcaRecords() {
+            guard let planID = planIDs[record.planID] else { continue }
+            state = try await client.mutate("dca_record", op: "create", data: recordData(DCARecordInput(
+                kind: record.kind, tradeDate: record.tradeDate, amount: record.amount, nav: record.nav,
+                shares: record.shares, fee: record.fee, note: record.note
+            ), planID: planID))
+            sent += 1
+        }
+
         for (code, item) in ledger.fxRates() {
             guard let rate = item.rate, rate > 0 else { continue }
             state = try await client.mutate("fx", op: "upsert", data: ["code": code, "rate": rate])
@@ -203,6 +223,21 @@ enum CloudUpload {
             currency: holding.currency, avgCost: holding.avgCost, manualPrice: holding.manualPrice,
             accountLabel: holding.accountLabel, note: holding.note
         ))
+    }
+
+    static func planData(_ plan: DCAPlanInput) -> [String: Any] {
+        [
+            "name": plan.name, "symbol": plan.symbol, "amount": plan.amount, "cycle": plan.cycle,
+            "debit_day": plan.debitDay, "status": plan.status, "started_on": json(plan.startedOn),
+            "manual_nav": json(plan.manualNav), "note": plan.note,
+        ]
+    }
+
+    static func recordData(_ record: DCARecordInput, planID: Int64) -> [String: Any] {
+        [
+            "plan_id": planID, "kind": record.kind, "trade_date": record.tradeDate, "amount": json(record.amount),
+            "nav": json(record.nav), "shares": json(record.shares), "fee": json(record.fee), "note": record.note,
+        ]
     }
 
     static func propertyData(_ input: PropertyInput) -> [String: Any] {

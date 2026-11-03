@@ -22,7 +22,7 @@ struct DashboardView: View {
                         .foregroundStyle(FiColor.muted)
                     LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 2), spacing: 12) {
                         MetricCard(title: "储蓄", value: FiFormat.cny(summary.savingsCNY), note: "\(summary.accounts.count) 个账户" + (summary.savingsMissing ? " · 有余额未折算" : ""))
-                        MetricCard(title: "投资", value: FiFormat.cny(summary.investCNY), note: "\(summary.holdings.count) 笔持仓" + (summary.unpriced > 0 ? " · \(summary.unpriced) 笔无价格" : ""))
+                        MetricCard(title: "投资", value: FiFormat.cny(summary.investCNY), note: "\(summary.holdings.count) 笔持仓 · \(summary.dcaPlans.count) 个定投" + (summary.unpriced > 0 ? " · \(summary.unpriced) 笔无价格" : ""))
                         MetricCard(title: "不动产净值", value: FiFormat.cny(summary.propertyEquityCNY), note: "登记月租金 \(FiFormat.cny(summary.rentMonthly))")
                         MetricCard(title: "净资产", value: FiFormat.cny(summary.netCNY), note: missing.isEmpty ? "储蓄 + 投资 + 不动产净值" : missing.joined(separator: " · "))
                         MetricCard(title: "本月支出", value: FiFormat.cny(summary.monthExpense), note: String(summary.today.prefix(7)))

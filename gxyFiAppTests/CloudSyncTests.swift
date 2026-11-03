@@ -47,6 +47,11 @@ struct CloudServerTests {
         try ledger.saveBalance(BalanceInput(accountID: accountID, asOfDate: "2026-11-01", balance: 888.8, note: ""), id: nil)
         let food = try #require(ledger.categories().first { $0.name == "餐饮" })
         try ledger.saveExpense(ExpenseInput(categoryID: food.id, occurredOn: "2026-11-01", amount: 23.5, payee: "早餐\(tag)", note: ""), id: nil)
+        let planID = try ledger.saveDCAPlan(
+            DCAPlanInput(name: "定投\(tag)", symbol: "110020", amount: 500, cycle: "每月", debitDay: 8, status: "进行中", startedOn: nil, manualNav: nil, note: ""),
+            id: nil
+        )
+        try ledger.saveDCARecord(DCARecordInput(kind: "期初", tradeDate: "2026-10-01", amount: 1000, nav: 1, shares: 1000, fee: nil, note: ""), planID: planID, id: nil)
 
         let model = AppModel(ledger: ledger)
         try await model.connect(
@@ -71,6 +76,17 @@ struct CloudServerTests {
         state = try await web.state()
         #expect((state["expenses"] as? [[String: Any]] ?? []).contains { ($0["payee"] as? String) == "地铁\(tag)" })
         #expect(ledger.expenses().contains { $0.payee == "地铁\(tag)" })
+
+        let plan = try #require(model.summary.dcaPlans.first { $0.name == "定投\(tag)" })
+        #expect(plan.shares == 1000)
+        model.saveDCARecord(DCARecordInput(kind: "定投", tradeDate: "2026-10-08", amount: 500, nav: 1.25, shares: nil, fee: nil, note: ""), planID: plan.id, id: nil)
+        for _ in 0..<50 where model.syncing { try await Task.sleep(for: .milliseconds(100)) }
+        #expect(model.alert == nil)
+        state = try await web.state()
+        let webPlan = (state["dcaPlans"] as? [[String: Any]] ?? []).first { ($0["name"] as? String) == "定投\(tag)" }
+        #expect((webPlan?["shares"] as? NSNumber)?.doubleValue == 1400)
+        #expect((webPlan?["market_value"] as? NSNumber)?.doubleValue == 1750)
+        #expect(model.summary.dcaPlans.first { $0.id == plan.id }?.marketValue == 1750)
 
         await model.disconnect()
         #expect(!model.isCloud)

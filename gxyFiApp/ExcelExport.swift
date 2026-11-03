@@ -28,6 +28,19 @@ enum WorkbookExport {
                 [.text($0.name), .text($0.symbol), .text(LedgerKind.marketLabel[$0.market] ?? $0.market), .number($0.quantity, "0.0000"), .text($0.currency), .number($0.avgCost, "0.0000"), .number($0.price, "0.0000"), .number(FiFormat.round4($0.ret), "0.00%"), .text($0.source), .text($0.quotedAt), .number(FiFormat.round2($0.costCny)), .number(FiFormat.round2($0.cny)), .number(FiFormat.round2($0.pnlCny)), .number(FiFormat.round4($0.weight), "0.00%"), .text($0.accountLabel), .text($0.note)]
             }
         )))
+        sheets.append(("基金定投", table(
+            ["基金", "代码", "每期金额", "周期", "状态", "开始日期", "份额", "成本", "净值", "净值来源", "市值", "浮盈", "备注"],
+            summary.dcaPlans.map {
+                [.text($0.name), .text($0.symbol), .number($0.amount), .text($0.cycleLabel), .text($0.status), .date($0.startedOn), .number($0.shares, "0.0000"), .number($0.cost), .number($0.nav, "0.0000"), .text($0.navSource), .number($0.marketValue), .number($0.pnl), .text($0.note)]
+            }
+        )))
+        let planNames = Dictionary(uniqueKeysWithValues: summary.dcaPlans.map { ($0.id, $0) })
+        sheets.append(("定投记录", table(
+            ["基金", "代码", "类型", "确认日期", "金额", "确认净值", "确认份额", "手续费", "备注"],
+            ledger.dcaRecords().map {
+                [.text(planNames[$0.planID]?.name ?? ""), .text(planNames[$0.planID]?.symbol ?? ""), .text($0.kind), .date($0.tradeDate), .number($0.amount), .number($0.nav, "0.0000"), .number($0.shares, "0.0000"), .number($0.fee), .text($0.note)]
+            }
+        )))
         sheets.append(("不动产", table(
             ["名称", "类型", "城市", "地址", "面积平方米", "购入日", "购入价", "现值", "估值日", "贷款余额", "净值", "月租金", "备注"],
             summary.properties.map {

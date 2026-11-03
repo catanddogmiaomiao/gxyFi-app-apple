@@ -199,6 +199,142 @@ struct HoldingForm: View {
     }
 }
 
+struct DCAPlanForm: View {
+    var initial: DCAPlanRecord?
+    var onCancel: () -> Void
+    var onSave: (DCAPlanInput) -> Void
+    @State private var name = ""
+    @State private var symbol = ""
+    @State private var amount = ""
+    @State private var cycle = "每月"
+    @State private var debitDay = 8
+    @State private var status = "进行中"
+    @State private var started = ""
+    @State private var manual = ""
+    @State private var note = ""
+    @State private var error: String?
+
+    var body: some View {
+        FormSheet(title: "定投计划", error: error, onCancel: onCancel, onSave: save) {
+            formRow("基金名称") { TextField("例如 沪深300ETF联接", text: $name) }
+            formRow("基金代码") { TextField("6 位基金代码", text: $symbol).keyboardType(.numberPad) }
+            formRow("每期金额") { TextField("每期扣款金额", text: $amount).keyboardType(.decimalPad) }
+            formRow("扣款周期") {
+                Picker("", selection: $cycle) {
+                    ForEach(DCA.cycles, id: \.self, content: Text.init)
+                }.labelsHidden()
+            }
+            formRow("扣款日") {
+                Picker("", selection: $debitDay) {
+                    if cycle == "每月" {
+                        ForEach(1...28, id: \.self) { Text("\($0) 日").tag($0) }
+                    } else {
+                        ForEach(1...5, id: \.self) { Text(DCA.weekdays[$0]).tag($0) }
+                    }
+                }.labelsHidden()
+            }
+            formRow("状态") {
+                Picker("", selection: $status) {
+                    ForEach(DCA.statuses, id: \.self, content: Text.init)
+                }.labelsHidden()
+            }
+            formRow("开始日期") { TextField("YYYY-MM-DD，可留空", text: $started) }
+            formRow("最新净值") { TextField("留空则用最近一次确认净值", text: $manual).keyboardType(.decimalPad) }
+            formRow("备注") { TextField("", text: $note) }
+        }
+        .onAppear(perform: load)
+        .onChange(of: cycle) { _, value in
+            if value != "每月", debitDay > 5 { debitDay = 1 }
+        }
+    }
+
+    private func load() {
+        name = initial?.name ?? ""
+        symbol = initial?.symbol ?? ""
+        amount = initial.map { decimalText($0.amount) } ?? ""
+        cycle = initial?.cycle ?? "每月"
+        debitDay = initial?.debitDay ?? 8
+        status = initial?.status ?? "进行中"
+        started = initial?.startedOn ?? ""
+        manual = initial?.manualNav.map(decimalText) ?? ""
+        note = initial?.note ?? ""
+    }
+
+    private func save() {
+        do {
+            let paid = try FiFormat.parseNumber(amount, label: "每期金额", required: true, allowZero: false)
+            let nav = try FiFormat.parseNumber(manual, label: "最新净值")
+            let input = DCAPlanInput(
+                name: name, symbol: symbol, amount: paid ?? 0, cycle: cycle, debitDay: debitDay,
+                status: status, startedOn: blank(started), manualNav: nav, note: note
+            )
+            onSave(try DCA.preparePlan(input))
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+}
+
+struct DCARecordForm: View {
+    var initial: DCARecord?
+    var onCancel: () -> Void
+    var onSave: (DCARecordInput) -> Void
+    @State private var kind = "定投"
+    @State private var date = Date()
+    @State private var amount = ""
+    @State private var nav = ""
+    @State private var shares = ""
+    @State private var fee = ""
+    @State private var note = ""
+    @State private var error: String?
+
+    var body: some View {
+        FormSheet(title: "定投确认", error: error, onCancel: onCancel, onSave: save) {
+            formRow("类型") {
+                Picker("", selection: $kind) {
+                    ForEach(DCA.kinds, id: \.self, content: Text.init)
+                }.labelsHidden().pickerStyle(.segmented)
+            }
+            formRow("确认日期") { DatePicker("", selection: $date, displayedComponents: .date).labelsHidden() }
+            formRow("金额") { TextField(DCA.amountHints[kind] ?? "", text: $amount).keyboardType(.decimalPad) }
+            formRow("确认净值") { TextField("", text: $nav).keyboardType(.decimalPad) }
+            formRow("确认份额") { TextField(kind == "定投" ? "定投可留空，其余需要填写" : "确认份额", text: $shares).keyboardType(.decimalPad) }
+            formRow("手续费") { TextField("没有就留空", text: $fee).keyboardType(.decimalPad) }
+            formRow("备注") { TextField("", text: $note) }
+            Text(DCA.kindHints[kind] ?? "")
+                .font(.system(size: 12)).foregroundStyle(FiColor.muted)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .onAppear(perform: load)
+    }
+
+    private func load() {
+        kind = initial?.kind ?? "定投"
+        date = initial.flatMap { FiFormat.parseDay($0.tradeDate) } ?? Date()
+        amount = initial.map { $0.amount == 0 ? "" : decimalText($0.amount) } ?? ""
+        nav = initial?.nav.map(decimalText) ?? ""
+        shares = initial.map { decimalText($0.shares) } ?? ""
+        fee = initial.map { $0.fee == 0 ? "" : decimalText($0.fee) } ?? ""
+        note = initial?.note ?? ""
+    }
+
+    private func save() {
+        do {
+            let input = DCARecordInput(
+                kind: kind, tradeDate: FiFormat.day(date),
+                amount: try FiFormat.parseNumber(amount, label: "金额"),
+                nav: try FiFormat.parseNumber(nav, label: "确认净值"),
+                shares: try FiFormat.parseNumber(shares, label: "确认份额"),
+                fee: try FiFormat.parseNumber(fee, label: "手续费"),
+                note: note
+            )
+            onSave(try DCA.normalizeRecord(input))
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+}
+
 struct PropertyForm: View {
     var initial: PropertyRecord?
     var onCancel: () -> Void
@@ -427,7 +563,13 @@ private func checkDate(_ text: String, label: String) throws {
 }
 
 private func decimalText(_ value: Double) -> String {
-    String(format: "%g", value)
+    let formatter = NumberFormatter()
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.numberStyle = .decimal
+    formatter.usesGroupingSeparator = false
+    formatter.minimumFractionDigits = 0
+    formatter.maximumFractionDigits = 8
+    return formatter.string(from: NSNumber(value: value)) ?? String(value)
 }
 
 private func blank(_ text: String) -> String? {

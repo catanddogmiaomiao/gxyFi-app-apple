@@ -28,6 +28,7 @@ final class AppModel {
     var quotes: [QuoteRecord]
     var expenses: [ExpenseRecord]
     var categories: [CategoryRecord]
+    var dcaRecords: [DCARecord]
     var balances: [BalanceRecord]
     var status = "行情只用于估值，有延迟，不构成投资建议"
     var refreshing = false
@@ -53,6 +54,7 @@ final class AppModel {
         quotes = ledger.quotes()
         expenses = ledger.expenses()
         categories = ledger.categories()
+        dcaRecords = ledger.dcaRecords()
         balances = []
         cloudServer = ledger.setting("cloud_server") ?? ""
         selectedAccountID = summary.accounts.first?.id
@@ -93,6 +95,7 @@ final class AppModel {
         quotes = ledger.quotes()
         expenses = ledger.expenses()
         categories = ledger.categories()
+        dcaRecords = ledger.dcaRecords()
         if let id = selectedAccountID, !summary.accounts.contains(where: { $0.id == id }) { selectedAccountID = nil }
         if selectedAccountID == nil { selectedAccountID = summary.accounts.first?.id }
         reloadBalances()
@@ -272,6 +275,46 @@ final class AppModel {
     func deleteHolding(_ id: Int64) {
         write({ try await $0.mutate("holding", op: "delete", id: id) }) {
             ledger.deleteHolding(id)
+        }
+    }
+
+    func saveDCAPlan(_ input: DCAPlanInput, id: Int64?) {
+        let plan: DCAPlanInput
+        do {
+            plan = try DCA.preparePlan(input)
+        } catch {
+            alert = error.localizedDescription
+            return
+        }
+        let data = CloudUpload.planData(plan)
+        write({ try await $0.mutate("dca_plan", op: id == nil ? "create" : "update", id: id, data: data) }) {
+            _ = try ledger.saveDCAPlan(plan, id: id)
+        }
+    }
+
+    func deleteDCAPlan(_ id: Int64) {
+        write({ try await $0.mutate("dca_plan", op: "delete", id: id) }) {
+            ledger.deleteDCAPlan(id)
+        }
+    }
+
+    func saveDCARecord(_ input: DCARecordInput, planID: Int64, id: Int64?) {
+        let record: DCARecordInput
+        do {
+            record = try DCA.normalizeRecord(input)
+        } catch {
+            alert = error.localizedDescription
+            return
+        }
+        let data = CloudUpload.recordData(record, planID: planID)
+        write({ try await $0.mutate("dca_record", op: id == nil ? "create" : "update", id: id, data: data) }) {
+            try ledger.saveDCARecord(record, planID: planID, id: id)
+        }
+    }
+
+    func deleteDCARecord(_ id: Int64) {
+        write({ try await $0.mutate("dca_record", op: "delete", id: id) }) {
+            try ledger.deleteDCARecord(id)
         }
     }
 
