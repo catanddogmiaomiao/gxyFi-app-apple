@@ -2,7 +2,9 @@ import SwiftUI
 
 struct ExpensesView: View {
     @Environment(AppModel.self) private var model
-    @State private var month = String(FiFormat.day(.now).prefix(7))
+    /// 空字符串表示全部月份，「2026」表示全年，「2026-11」表示一个月。
+    @State private var period = String(FiFormat.day(.now).prefix(7))
+    @State private var categoryFilter: Int64?
     @State private var editing: ExpenseRecord?
     @State private var showingExpense = false
     @State private var showingCategory = false
@@ -10,26 +12,29 @@ struct ExpensesView: View {
     @State private var confirm = false
     @State private var selectedID: Int64?
 
-    private var months: [String] {
-        var values = ["全部月份"]
-        let calendar = Calendar.current
-        var cursor = calendar.date(from: calendar.dateComponents([.year, .month], from: .now)) ?? .now
-        for _ in 0..<24 {
-            values.append(String(FiFormat.day(cursor).prefix(7)))
-            cursor = calendar.date(byAdding: .month, value: -1, to: cursor) ?? cursor
-        }
+    private var periods: [(String, String)] {
+        let year = Calendar.current.component(.year, from: .now)
+        var values = [("", "全部月份"), (String(year), "\(year) 全年"), (String(year - 1), "\(year - 1) 全年")]
+        values += Spending.monthKeys(24).reversed().map { ($0, Spending.periodLabel($0)) }
         return values
     }
 
+    private var currentPeriod: String? { period.isEmpty ? nil : period }
+
     private var visible: [ExpenseRecord] {
-        guard month != "全部月份" else { return model.expenses }
-        return model.expenses.filter { $0.occurredOn.hasPrefix(month) }
+        model.expenses.filter { Spending.inPeriod($0, currentPeriod) && (categoryFilter == nil || $0.categoryID == categoryFilter) }
     }
 
     var body: some View {
-        PageChrome(title: "支出", subtitle: "支出按人民币登记，用来和年度预算对照。默认看本月。") {
-            Picker("月份", selection: $month) {
-                ForEach(months, id: \.self, content: Text.init)
+        let expenses = model.expenses
+        let colors = FiColor.categoryColors(model.categories.map(\.name))
+        let groups = Spending.byCategory(expenses, period: currentPeriod)
+        let year = currentPeriod.flatMap { Int($0.prefix(4)) } ?? Calendar.current.component(.year, from: .now)
+        let budgets = Spending.budgetFor(currentPeriod, budgets: model.ledger.budgetProgress(year: year))
+        let rows = visible
+        PageChrome(title: "支出", subtitle: "支出按人民币登记，用来和年度预算对照。点「分类构成」里的一类只看这一类，点柱子切换到那个月。") {
+            Picker("期间", selection: $period) {
+                ForEach(periods, id: \.0) { Text($0.1).tag($0.0) }
             }
             .labelsHidden()
             .pickerStyle(.menu)
@@ -37,21 +42,52 @@ struct ExpensesView: View {
             FiButton(title: "编辑") { open() }
             FiButton(title: "删除", kind: .danger) { confirm = selected != nil }
             FiButton(title: "新类别") { showingCategory = true }
-            Text("合计 \(FiFormat.cny(visible.reduce(0) { $0 + $1.amount }))")
-                .font(.system(size: 12)).foregroundStyle(FiColor.muted)
         } content: {
-            FiTable(
-                columns: ["日期", "类别", "金额", "对象", "备注"],
-                rows: visible,
-                selection: selectedID,
-                onSelect: { selectedID = $0 },
-                onOpen: { _ in open() }
-            ) { row in
-                [
-                    (row.occurredOn, FiColor.ink), (row.category, FiColor.ink),
-                    (FiFormat.cny(row.amount), FiColor.ink), (row.payee, FiColor.ink), (row.note, FiColor.ink),
-                ]
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 2), spacing: 12) {
+                        cards(expenses: expenses, groups: groups, budgets: budgets)
+                    }
+                    FiPanel(title: "分类构成") {
+                        CategoryBars(rows: groups, colors: colors, budgets: budgets, selected: categoryFilter) { categoryFilter = $0 }
+                    }
+                    FiPanel(title: "近六个月 · 按类别") {
+                        StackedMonths(
+                            stack: Spending.monthlyStack(expenses),
+                            colors: colors,
+                            current: currentPeriod?.count == 7 ? currentPeriod : nil
+                        ) { period = $0 }
+                    }
+                    HStack {
+                        Text(filterText(rows: rows, groups: groups))
+                            .font(.system(size: 13))
+                            .foregroundStyle(FiColor.cream)
+                        Spacer()
+                        if categoryFilter != nil {
+                            FiButton(title: "显示全部类别") { categoryFilter = nil }
+                        }
+                    }
+                    FiTable(
+                        columns: ["日期", "类别", "金额", "对象", "备注"],
+                        rows: rows,
+                        selection: selectedID,
+                        onSelect: { selectedID = $0 },
+                        onOpen: { _ in open() }
+                    ) { row in
+                        [
+                            (row.occurredOn, FiColor.ink), (row.category, colors[row.category] ?? FiColor.ink),
+                            (FiFormat.cny(row.amount), row.amount < 0 ? FiColor.down : FiColor.ink),
+                            (row.payee, FiColor.ink), (row.note, FiColor.ink),
+                        ]
+                    }
+                    .frame(height: max(CGFloat(rows.count) * 43 + 36, 120))
+                }
+                .padding(.bottom, 16)
             }
+        }
+        .onChange(of: period) { _, _ in categoryFilter = nil }
+        .onChange(of: groups.map(\.categoryID)) { _, ids in
+            if let filter = categoryFilter, !ids.contains(filter) { categoryFilter = nil }
         }
         .sheet(isPresented: $showingExpense) {
             ExpenseForm(categories: model.categories, initial: isNew ? nil : editing, onCancel: { showingExpense = false }) { input in
@@ -75,9 +111,63 @@ struct ExpensesView: View {
 
     private var selected: ExpenseRecord? { visible.first { $0.id == selectedID } }
 
+    @ViewBuilder
+    private func cards(expenses: [ExpenseRecord], groups: [CategorySpend], budgets: [Int64: Double]) -> some View {
+        let amount = Spending.total(expenses, period: currentPeriod)
+        let count = groups.reduce(0) { $0 + $1.count }
+        let days = Spending.days(currentPeriod)
+        MetricCard(title: "本期支出", value: FiFormat.cny(amount), note: "\(count) 笔" + (days.map { " · 日均 \(FiFormat.cny(amount / Double($0)))" } ?? ""))
+
+        if let before = Spending.previousPeriod(currentPeriod) {
+            let last = Spending.total(expenses, period: before)
+            if last != 0 {
+                let change = (amount - last) / last
+                MetricCard(title: "比上期", value: (change > 0 ? "+" : "") + FiFormat.percent(change), note: "\(Spending.periodLabel(before)) \(FiFormat.cny(last))")
+            } else {
+                MetricCard(title: "比上期", value: "—", note: "\(Spending.periodLabel(before)) 没有支出")
+            }
+        } else {
+            MetricCard(title: "比上期", value: "—", note: "选一个月或一年才能和上期比较")
+        }
+
+        if let top = groups.first, top.amount > 0 {
+            MetricCard(title: "最多的一类", value: top.category, note: "\(FiFormat.cny(top.amount)) · 占 \(Int((top.share * 100).rounded()))%")
+        } else {
+            MetricCard(title: "最多的一类", value: "—", note: "")
+        }
+
+        let planned = budgets.values.reduce(0, +)
+        if currentPeriod == nil {
+            MetricCard(title: "本期预算", value: "—", note: "选一个月或一年才能对照预算")
+        } else if planned == 0 {
+            MetricCard(title: "本期预算", value: "未设置", note: "在「更多 → 预算」按类别设置年度预算")
+        } else {
+            let budgeted = groups.filter { budgets[$0.categoryID] != nil }
+            let spent = budgeted.reduce(0) { $0 + $1.amount }
+            let over = budgeted.filter { $0.amount > (budgets[$0.categoryID] ?? 0) }.prefix(3).map(\.category)
+            let scope = currentPeriod?.count == 7 ? "按年度预算的十二分之一" : "全年预算"
+            MetricCard(
+                title: "本期预算",
+                value: "已用 \(Int((spent / planned * 100).rounded()))%",
+                note: "\(scope) \(FiFormat.cny(planned))" + (over.isEmpty ? "" : " · 超出：\(over.joined(separator: "、"))")
+            )
+        }
+    }
+
+    private func filterText(rows: [ExpenseRecord], groups: [CategorySpend]) -> String {
+        if let filter = categoryFilter, let name = groups.first(where: { $0.categoryID == filter })?.category {
+            return "只看「\(name)」 · \(rows.count) 笔 · 合计 \(FiFormat.cny(rows.reduce(0) { $0 + $1.amount }))"
+        }
+        return "\(Spending.periodLabel(currentPeriod)) · \(rows.count) 笔明细"
+    }
+
     private func open() {
         guard let selected else {
             model.alert = "请先选择一笔支出。"
+            return
+        }
+        if selected.amount < 0 {
+            model.alert = "这是一笔退款，来自账户明细。要改类别或金额，请在电脑端或网页端的「归类明细」里改。"
             return
         }
         editing = selected

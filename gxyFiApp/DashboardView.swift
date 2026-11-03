@@ -35,7 +35,12 @@ struct DashboardView: View {
                     VStack(alignment: .leading, spacing: 12) {
                         Text("资产结构").font(.system(size: 12)).foregroundStyle(FiColor.gold)
                         MixBar(parts: [("储蓄", summary.savingsCNY), ("投资", summary.investCNY), ("不动产", summary.propertyEquityCNY)])
-                        MonthBars(points: summary.monthlyExpenses)
+                        FiPanel(title: "近六月支出 · 按类别") {
+                            StackedMonths(
+                                stack: Spending.monthlyStack(model.expenses),
+                                colors: FiColor.categoryColors(model.categories.map(\.name))
+                            )
+                        }
                     }
                     Text(staleText(summary))
                         .font(.system(size: 12))

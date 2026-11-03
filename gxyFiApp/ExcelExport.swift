@@ -22,9 +22,10 @@ enum WorkbookExport {
             ledger.allBalances().map { [.text($0.accountName), .text($0.institution), .text($0.currency), .date($0.asOfDate), .number($0.balance), .text($0.note)] }
         )))
         sheets.append(("投资持仓", table(
-            ["名称", "代码", "市场", "数量", "币种", "成本价", "现价", "价格来源", "行情时间", "市值（原币）", "市值（人民币）", "浮盈（原币）", "账户", "备注"],
+            ["名称", "代码", "市场", "数量", "币种", "成本价", "现价", "收益率", "价格来源", "行情时间",
+             "成本（人民币）", "市值（人民币）", "浮盈（人民币）", "占比", "账户", "备注"],
             summary.holdings.map {
-                [.text($0.name), .text($0.symbol), .text(LedgerKind.marketLabel[$0.market] ?? $0.market), .number($0.quantity, "0.0000"), .text($0.currency), .number($0.avgCost, "0.0000"), .number($0.price, "0.0000"), .text($0.source), .text($0.quotedAt), .number($0.marketValue), .number($0.cny), .number($0.pnl), .text($0.accountLabel), .text($0.note)]
+                [.text($0.name), .text($0.symbol), .text(LedgerKind.marketLabel[$0.market] ?? $0.market), .number($0.quantity, "0.0000"), .text($0.currency), .number($0.avgCost, "0.0000"), .number($0.price, "0.0000"), .number(FiFormat.round4($0.ret), "0.00%"), .text($0.source), .text($0.quotedAt), .number(FiFormat.round2($0.costCny)), .number(FiFormat.round2($0.cny)), .number(FiFormat.round2($0.pnlCny)), .number(FiFormat.round4($0.weight), "0.00%"), .text($0.accountLabel), .text($0.note)]
             }
         )))
         sheets.append(("不动产", table(
@@ -179,7 +180,7 @@ enum WorkbookExport {
     <fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF1C1914"/></patternFill></fill></fills>
     <borders count="2"><border/><border><left style="thin"><color rgb="FFE6E0D6"/></left><right style="thin"><color rgb="FFE6E0D6"/></right><top style="thin"><color rgb="FFE6E0D6"/></top><bottom style="thin"><color rgb="FFE6E0D6"/></bottom></border></borders>
     <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
-    <cellXfs count="7">
+    <cellXfs count="8">
     <xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0"/>
     <xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment horizontal="center"/></xf>
     <xf numFmtId="2" fontId="0" fillId="0" borderId="1" xfId="0" applyNumberFormat="1"/>
@@ -187,6 +188,7 @@ enum WorkbookExport {
     <xf numFmtId="0" fontId="2" fillId="0" borderId="0" xfId="0" applyFont="1" applyAlignment="1"><alignment wrapText="1" vertical="top"/></xf>
     <xf numFmtId="165" fontId="0" fillId="0" borderId="1" xfId="0" applyNumberFormat="1"/>
     <xf numFmtId="1" fontId="0" fillId="0" borderId="1" xfId="0" applyNumberFormat="1"/>
+    <xf numFmtId="10" fontId="0" fillId="0" borderId="1" xfId="0" applyNumberFormat="1"/>
     </cellXfs>
     <numFmts count="2"><numFmt numFmtId="164" formatCode="yyyy-mm-dd"/><numFmt numFmtId="165" formatCode="0.0000"/></numFmts>
     </styleSheet>
@@ -246,7 +248,7 @@ enum WorkbookExport {
                 return "<c r=\"\(reference)\" s=\"0\" t=\"inlineStr\"><is><t>\(WorkbookExport.escape(value))</t></is></c>"
             case .amount(let value, let format):
                 guard let value else { return "<c r=\"\(reference)\" s=\"0\"/>" }
-                let style = format == "0.0000" ? 5 : (format == "0" ? 6 : 2)
+                let style = ["0.0000": 5, "0": 6, "0.00%": 7][format] ?? 2
                 return "<c r=\"\(reference)\" s=\"\(style)\"><v>\(value)</v></c>"
             case .day(let value):
                 guard let value, let serial = excelSerial(value) else {

@@ -128,29 +128,40 @@ struct HoldingsView: View {
     @State private var confirm = false
 
     var body: some View {
+        let holdings = model.summary.holdings
         PageChrome(
             title: "投资",
-            subtitle: "黄金按克、股票按股。填了手工现价就用手工现价；留空则用刷新到的行情。Au(T+D) 的价格是人民币/克。"
+            subtitle: "收益率 = 现价 ÷ 成本价 − 1，按原币计算；成本、市值、浮盈按当前汇率折成人民币。当日涨跌看「行情」页。"
         ) {
             FiButton(title: "新增持仓", kind: .primary) { sheet = .some(nil); showing = true }
             FiButton(title: "编辑") { edit() }
             FiButton(title: "删除", kind: .danger) { confirm = selected != nil }
         } content: {
-            FiTable(
-                columns: ["名称", "代码", "市场", "数量", "成本价", "现价", "涨跌", "市值¥", "浮盈¥", "来源"],
-                rows: model.summary.holdings,
-                selection: selectedID,
-                onSelect: { selectedID = $0 },
-                onOpen: { _ in edit() }
-            ) { row in
-                [
-                    (row.name, FiColor.ink), (row.symbol, FiColor.ink),
-                    (LedgerKind.marketLabel[row.market] ?? row.market, FiColor.ink),
-                    (FiFormat.price(row.quantity), FiColor.ink), (FiFormat.price(row.avgCost), FiColor.ink),
-                    (FiFormat.price(row.price), FiColor.ink), (FiFormat.percent(row.dayChange), .pnl(row.dayChange)),
-                    (FiFormat.cny(row.cny), FiColor.ink), (FiFormat.cny(row.pnlCny), .pnl(row.pnlCny)),
-                    (row.source.isEmpty ? "—" : row.source, FiColor.ink),
-                ]
+            VStack(alignment: .leading, spacing: 8) {
+                if !holdings.isEmpty {
+                    Text(totalsText(HoldingTotals(holdings)))
+                        .font(.system(size: 13))
+                        .foregroundStyle(FiColor.cream)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                FiTable(
+                    columns: ["名称", "代码", "市场", "数量", "成本价", "现价", "收益率", "成本¥", "市值¥", "浮盈¥", "占比", "来源"],
+                    rows: holdings,
+                    selection: selectedID,
+                    onSelect: { selectedID = $0 },
+                    onOpen: { _ in edit() }
+                ) { row in
+                    [
+                        (row.name, FiColor.ink), (row.symbol, FiColor.ink),
+                        (LedgerKind.marketLabel[row.market] ?? row.market, FiColor.ink),
+                        (FiFormat.price(row.quantity), FiColor.ink),
+                        row.avgCost == nil ? ("未填", FiColor.flat) : (FiFormat.price(row.avgCost), FiColor.ink),
+                        (FiFormat.price(row.price), FiColor.ink), (FiFormat.percent(row.ret), .pnl(row.ret)),
+                        (FiFormat.cny(row.costCny), FiColor.ink), (FiFormat.cny(row.cny), FiColor.ink),
+                        (FiFormat.cny(row.pnlCny), .pnl(row.pnlCny)), (FiFormat.percent(row.weight), FiColor.ink),
+                        (sourceText(row), FiColor.ink),
+                    ]
+                }
             }
         }
         .sheet(isPresented: $showing) {
@@ -170,6 +181,18 @@ struct HoldingsView: View {
 
     @State private var selectedID: Int64?
     private var selected: HoldingRecord? { model.summary.holdings.first { $0.id == selectedID } }
+
+    private func totalsText(_ totals: HoldingTotals) -> String {
+        var text = "市值 \(FiFormat.cny(totals.value)) · 成本 \(FiFormat.cny(totals.cost)) · 浮盈 \(FiFormat.signed(totals.pnl))"
+        if let ret = totals.ret { text += "（\(FiFormat.percent(ret))）" }
+        if totals.withoutCost > 0 { text += " · \(totals.withoutCost) 笔未填成本，不计入收益" }
+        return text
+    }
+
+    private func sourceText(_ row: HoldingRecord) -> String {
+        let source = row.source.isEmpty ? "—" : row.source
+        return row.quotedAt.isEmpty ? source : "\(source) · \(row.quotedAt)"
+    }
 
     private func edit() {
         guard let selected else {

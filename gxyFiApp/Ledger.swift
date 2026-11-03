@@ -76,6 +76,29 @@ struct HoldingRecord: Identifiable, Equatable {
     var cny: Double?
     var pnlCny: Double?
     var dayChange: Double?
+    var costCny: Double? = nil
+    var ret: Double? = nil
+    var weight: Double? = nil
+}
+
+struct HoldingTotals: Equatable {
+    var value: Double
+    var cost: Double
+    var pnl: Double
+    var ret: Double?
+    var withoutCost: Int
+
+    /// 只合计填了成本、也有价格的持仓，收益率才有意义。
+    init(_ rows: [HoldingRecord]) {
+        let priced = rows.filter { $0.cny != nil && $0.costCny != nil }
+        let cost = priced.reduce(0) { $0 + ($1.costCny ?? 0) }
+        let worth = priced.reduce(0) { $0 + ($1.cny ?? 0) }
+        value = rows.reduce(0) { $0 + ($1.cny ?? 0) }
+        self.cost = cost
+        pnl = worth - cost
+        ret = cost == 0 ? nil : (worth - cost) / cost
+        withoutCost = rows.filter { $0.cny != nil && $0.costCny == nil }.count
+    }
 }
 
 struct QuoteRecord: Identifiable, Equatable {
@@ -175,12 +198,6 @@ struct BalanceExportRow {
     var note: String
 }
 
-struct MonthPoint: Identifiable, Equatable {
-    var month: String
-    var amount: Double
-    var id: String { month }
-}
-
 struct PortfolioSummary: Equatable {
     var accounts: [AccountRecord]
     var savingsCNY: Double
@@ -198,7 +215,6 @@ struct PortfolioSummary: Equatable {
     var budgetTotal: Double
     var budgetRows: [BudgetProgress]
     var budgetRatio: Double?
-    var monthlyExpenses: [MonthPoint]
     var staleAccounts: [AccountRecord]
     var fx: [String: FXQuote]
     var today: String
@@ -785,13 +801,16 @@ final class Ledger {
                 row.price = nil
                 row.source = quote?.message.isEmpty == false ? (quote?.message ?? "") : (quote == nil ? "" : "未取得行情")
             }
+            let cost = holding.avgCost.map { $0 * holding.quantity }
             if let price = row.price {
                 row.marketValue = price * holding.quantity
-                if let cost = holding.avgCost {
-                    row.pnl = row.marketValue! - cost * holding.quantity
+                if let cost {
+                    row.pnl = row.marketValue! - cost
+                    row.ret = cost == 0 ? nil : row.pnl! / cost
                 }
             }
             row.cny = row.marketValue == nil ? nil : toCNY(row.marketValue, currency: holding.currency, rates: rates)
+            row.costCny = cost == nil ? nil : toCNY(cost, currency: holding.currency, rates: rates)
             row.pnlCny = row.pnl == nil ? nil : toCNY(row.pnl, currency: holding.currency, rates: rates)
             if row.marketValue != nil, row.cny == nil { investMissing = true }
             if let cny = row.cny { invest += cny }
@@ -799,6 +818,9 @@ final class Ledger {
                 row.dayChange = (price - prev) / prev
             }
             valued.append(row)
+        }
+        for index in valued.indices {
+            valued[index].weight = valued[index].cny.flatMap { invest == 0 ? nil : $0 / invest }
         }
 
         var properties: [PropertyRecord] = []
@@ -833,7 +855,6 @@ final class Ledger {
             monthExpense: expenseTotal(start: FiFormat.day(monthStart), end: FiFormat.day(monthEnd)),
             yearExpense: yearExpense, budgetTotal: planned, budgetRows: budgets,
             budgetRatio: planned == 0 ? nil : yearExpense / planned,
-            monthlyExpenses: monthlyExpenses(count: 6, today: today),
             staleAccounts: stale, fx: rates, today: day
         )
     }
@@ -843,19 +864,6 @@ final class Ledger {
             "SELECT COALESCE(SUM(amount), 0) AS amount FROM expenses WHERE occurred_on>=? AND occurred_on<?",
             [.text(start), .text(end)]
         ).first?.real("amount")) ?? 0
-    }
-
-    private func monthlyExpenses(count: Int, today: Date) -> [MonthPoint] {
-        let calendar = Calendar.current
-        var cursor = calendar.date(from: calendar.dateComponents([.year, .month], from: today)) ?? today
-        var points: [MonthPoint] = []
-        for _ in 0..<count {
-            let end = calendar.date(byAdding: .month, value: 1, to: cursor) ?? cursor
-            let key = String(FiFormat.day(cursor).prefix(7))
-            points.append(MonthPoint(month: key, amount: expenseTotal(start: FiFormat.day(cursor), end: FiFormat.day(end))))
-            cursor = calendar.date(byAdding: .month, value: -1, to: cursor) ?? cursor
-        }
-        return points.reversed()
     }
 
     private func accountOnly(_ row: [String: SQLValue]) -> AccountRecord {

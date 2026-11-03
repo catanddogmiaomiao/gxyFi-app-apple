@@ -18,6 +18,27 @@ enum FiColor {
         Color(red: 0x8C / 255, green: 0x9B / 255, blue: 0xAB / 255),
         Color(red: 0x8A / 255, green: 0x70 / 255, blue: 0x44 / 255),
     ]
+    static let selected = Color(red: 0x2A / 255, green: 0x24 / 255, blue: 0x18 / 255)
+    static let track = Color(red: 0x1C / 255, green: 0x22 / 255, blue: 0x2C / 255)
+    static let categoryPalette = [
+        "#C6A15B", "#8C9BAB", "#7F9E93", "#C4786A", "#9A86A6",
+        "#D8C79E", "#5F8A8B", "#A0695A", "#8A7044", "#6F7F95",
+    ].map(hex)
+
+    /// 按类别的固定顺序分配颜色，同一类别在各个图里颜色一致。
+    static func categoryColors(_ names: [String]) -> [String: Color] {
+        var colors: [String: Color] = [:]
+        for (index, name) in names.enumerated() {
+            colors[name] = categoryPalette[index % categoryPalette.count]
+        }
+        if colors[Spending.other] == nil { colors[Spending.other] = muted }
+        return colors
+    }
+
+    nonisolated private static func hex(_ text: String) -> Color {
+        let value = Int(text.dropFirst(), radix: 16) ?? 0
+        return Color(red: Double((value >> 16) & 0xFF) / 255, green: Double((value >> 8) & 0xFF) / 255, blue: Double(value & 0xFF) / 255)
+    }
 }
 
 struct FiButton: View {
@@ -205,34 +226,14 @@ struct MixBar: View {
     }
 }
 
-struct MonthBars: View {
-    var points: [MonthPoint]
+struct FiPanel<Content: View>: View {
+    var title: String
+    @ViewBuilder var content: () -> Content
 
     var body: some View {
-        let peak = points.map(\.amount).max() ?? 0
-        VStack(alignment: .leading, spacing: 8) {
-            Text("近六月支出").font(.system(size: 12)).foregroundStyle(FiColor.gold)
-            if peak <= 0 {
-                Text("近几个月还没有支出").foregroundStyle(FiColor.muted).frame(maxWidth: .infinity, minHeight: 120)
-            } else {
-                HStack(alignment: .bottom, spacing: 12) {
-                    ForEach(points) { point in
-                        VStack(spacing: 4) {
-                            Text(point.amount > 0 ? String(format: "%.0f", point.amount) : "")
-                                .font(.system(size: 10))
-                                .foregroundStyle(FiColor.cream)
-                            RoundedRectangle(cornerRadius: 3)
-                                .fill(FiColor.gold)
-                                .frame(height: max(4, 110 * point.amount / peak))
-                            Text(String(point.month.suffix(5)))
-                                .font(.system(size: 11))
-                                .foregroundStyle(FiColor.muted)
-                        }
-                        .frame(maxWidth: .infinity)
-                    }
-                }
-                .frame(height: 150)
-            }
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title).font(.system(size: 12)).foregroundStyle(FiColor.gold)
+            content()
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .topLeading)
@@ -240,6 +241,147 @@ struct MonthBars: View {
         .overlay(alignment: .top) { Rectangle().fill(FiColor.gold).frame(height: 1) }
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(FiColor.line))
         .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+}
+
+/// 每个类别一行：名称、占比条、金额与占比。有预算时在条上画出预算线。点一行选中，再点取消。
+struct CategoryBars: View {
+    var rows: [CategorySpend]
+    var colors: [String: Color]
+    var budgets: [Int64: Double]
+    var selected: Int64?
+    var onPick: (Int64?) -> Void
+
+    var body: some View {
+        if rows.isEmpty {
+            Text("这一期还没有支出。可以记一笔，或在电脑端把导入的明细归类。")
+                .font(.system(size: 13))
+                .foregroundStyle(FiColor.muted)
+                .frame(maxWidth: .infinity, minHeight: 80)
+        } else {
+            let scale = max(rows.map(\.amount).max() ?? 0, budgets.values.max() ?? 0, 1)
+            VStack(spacing: 2) {
+                ForEach(rows) { row in
+                    line(row, scale: scale)
+                }
+            }
+        }
+    }
+
+    private func line(_ row: CategorySpend, scale: Double) -> some View {
+        let budget = budgets[row.categoryID]
+        let over = budget.map { row.amount > $0 } ?? false
+        var detail = "\(row.count) 笔"
+        if row.refund != 0 { detail += " · 含退款 \(FiFormat.money(row.refund))" }
+        if let budget, budget != 0 { detail += " · 预算 \(Int((row.amount / budget * 100).rounded()))%" }
+        return HStack(spacing: 8) {
+            Text(row.category)
+                .font(.system(size: 14))
+                .foregroundStyle(FiColor.cream)
+                .lineLimit(1)
+                .frame(width: 58, alignment: .leading)
+            GeometryReader { proxy in
+                let width = proxy.size.width
+                ZStack(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 3).fill(FiColor.track)
+                    if row.amount > 0 {
+                        RoundedRectangle(cornerRadius: 3)
+                            .fill(colors[row.category] ?? FiColor.gold)
+                            .frame(width: max(width * row.amount / scale, 3))
+                    }
+                    if let budget, budget != 0 {
+                        Rectangle()
+                            .fill(over ? FiColor.up : FiColor.cream)
+                            .frame(width: 2, height: 20)
+                            .offset(x: min(width * budget / scale, width - 2))
+                    }
+                }
+                .frame(height: 12)
+                .frame(maxHeight: .infinity)
+            }
+            VStack(alignment: .trailing, spacing: 2) {
+                Text("\(FiFormat.money(row.amount))  \(Int((row.share * 100).rounded()))%")
+                    .font(.system(size: 13))
+                    .foregroundStyle(over ? FiColor.up : FiColor.cream)
+                Text(detail)
+                    .font(.system(size: 10))
+                    .foregroundStyle(FiColor.muted)
+            }
+            .lineLimit(1)
+            .minimumScaleFactor(0.7)
+            .frame(width: 128, alignment: .trailing)
+        }
+        .padding(.horizontal, 6)
+        .frame(height: 42)
+        .background(RoundedRectangle(cornerRadius: 4).fill(row.categoryID == selected ? FiColor.selected : .clear))
+        .contentShape(Rectangle())
+        .onTapGesture { onPick(row.categoryID == selected ? nil : row.categoryID) }
+    }
+}
+
+/// 近几个月的支出，每月一根柱子，按类别分段。可以点柱子切换到那个月。
+struct StackedMonths: View {
+    var stack: MonthStack
+    var colors: [String: Color]
+    var current: String? = nil
+    var onPick: ((String) -> Void)? = nil
+
+    var body: some View {
+        let totals = stack.keys.map { key in stack.cells[key, default: [:]].values.reduce(0, +) }
+        let peak = totals.max() ?? 0
+        if peak <= 0 {
+            Text("近几个月还没有支出")
+                .font(.system(size: 13))
+                .foregroundStyle(FiColor.muted)
+                .frame(maxWidth: .infinity, minHeight: 120)
+        } else {
+            VStack(alignment: .leading, spacing: 10) {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 78), spacing: 6, alignment: .leading)], alignment: .leading, spacing: 4) {
+                    ForEach(stack.names, id: \.self) { name in
+                        HStack(spacing: 4) {
+                            RoundedRectangle(cornerRadius: 2).fill(colors[name] ?? FiColor.muted).frame(width: 9, height: 9)
+                            Text(name).font(.system(size: 11)).foregroundStyle(FiColor.muted).lineLimit(1)
+                        }
+                    }
+                }
+                HStack(alignment: .bottom, spacing: 10) {
+                    ForEach(Array(stack.keys.enumerated()), id: \.element) { index, key in
+                        column(key, total: totals[index], peak: peak)
+                    }
+                }
+                .frame(height: 170)
+            }
+        }
+    }
+
+    private func column(_ key: String, total: Double, peak: Double) -> some View {
+        let cells = stack.cells[key, default: [:]]
+        return VStack(spacing: 4) {
+            Spacer(minLength: 0)
+            Text(total > 0 ? FiFormat.money(total, digits: 0) : "")
+                .font(.system(size: 10))
+                .foregroundStyle(FiColor.cream)
+                .lineLimit(1)
+                .minimumScaleFactor(0.6)
+            VStack(spacing: 0) {
+                ForEach(stack.names.reversed(), id: \.self) { name in
+                    if let value = cells[name], value > 0 {
+                        Rectangle()
+                            .fill(colors[name] ?? FiColor.muted)
+                            .frame(height: max(120 * value / peak, 1))
+                    }
+                }
+            }
+            Text("\(Int(key.suffix(2)) ?? 0) 月")
+                .font(.system(size: 11))
+                .foregroundStyle(FiColor.muted)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, 3)
+        .padding(.vertical, 4)
+        .background(RoundedRectangle(cornerRadius: 4).fill(key == current ? FiColor.selected : .clear))
+        .contentShape(Rectangle())
+        .onTapGesture { onPick?(key) }
     }
 }
 
